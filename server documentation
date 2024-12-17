@@ -1,0 +1,240 @@
+// Import necessary modules
+const express = require('express'); // Web framework for Node.js
+const mysql = require('mysql2'); // MySQL database client for Node.js
+const bodyParser = require('body-parser'); // Middleware to parse incoming request bodies
+
+// Initialize express application
+const app = express();
+
+// Middleware setup
+app.use(bodyParser.urlencoded({ extended: false })); // Middleware to parse URL-encoded data from form submissions
+app.use(express.json()); // Middleware to parse JSON data from incoming requests
+app.use(express.static('public')); // Serve static files (like images, CSS, JS) from 'public' directory
+
+// Database connection setup
+const db = mysql.createConnection({
+    host: '127.0.0.1', // MySQL server address
+    user: 'root', // MySQL username (use your own username here)
+    password: 'root', // MySQL password (use your own password here)
+    database: 'test', // Database name to connect to
+});
+
+// Attempt to connect to the MySQL database
+db.connect(err => {
+    if (err) {
+        // Log error message if the connection fails
+        console.error('Error connecting to the database:', err.message);
+        return; // Stop execution if there's an error
+    }
+    console.log('Connected to the MySQL database.'); // Log success message if the connection is successful
+});
+
+// Set EJS as the view engine for rendering HTML views
+app.set('view engine', 'ejs');
+
+// Define routes
+
+// Route for the root path ('/')
+app.get('/', (req, res) => {
+    const query = 'SELECT * FROM student'; // SQL query to select all records from the 'student' table
+
+    // Execute the SQL query
+    db.query(query, (err, results) => {
+        if (err) {
+            // Log error message if query execution fails
+            console.error('Error fetching records:', err.message);
+            // Render the 'index' view with empty data and a null message
+            return res.render("index", { student: [], search_results: [], message: null });
+        }
+
+        // Render the 'index' view with the fetched student records
+        res.render('index', {
+            student: results, // Pass the student records as 'student' to the view
+            search_results: [], // Initialize an empty array for search results (no search yet)
+            message: null, // No message to display (null by default)
+            no_result: false, // Set 'no_result' to false (no results message will not be shown)
+        });
+    });
+});
+
+// Define a route for search functionality ('/search')
+app.get('/search', (req, res) => {
+    // Retrieve the 'search_name' parameter from the query string (URL)
+    const search_name = req.query.search_name;
+
+    // Define the SQL query to search for students by name using a 'LIKE' operator
+    const query = 'SELECT * FROM student WHERE name LIKE ?';
+    
+    // Prepare the search term, wrapping the search_name with '%' to match partial names
+    const search_term = `%${search_name}%`;
+
+    // Perform the SQL query
+    db.query(query, [search_term], (err, results) => {
+        if (err) {
+            // Log the error if query execution fails
+            console.error('Error fetching records:', err.message);
+            // Send a 500 Internal Server Error response if there's a failure
+            return res.status(500).send('Internal Server Error');
+        }
+
+        // Determine if there are no results from the search query (empty result array)
+        const no_results = results.length === 0; 
+
+        // Log whether no results were found
+        console.log('No results:', no_results);
+
+        // Render the 'index' view with the search results and related data
+        res.render('index', {
+            student: [],  // No student records to display in the table (reset for search results)
+            search_results: results,  // Pass the search results to the view
+            message: null,  // No message is displayed (null by default)
+            no_result: no_results,  // Set 'no_result' to true if no search results are found
+        });
+    });
+});
+
+// app.post('/search', (req, res) => {
+//     const { search_query} = req.body;
+//     const query = 'SELECT * FROM student WHERE name LIKE ? or email LIKE ?';
+//     const search_term =  `%${search_query}`;
+
+//     db.query(query, [search_term, search_term], (err, results) => {
+//         if (err){
+//             console.error('Error searching for student: ', err.message);
+//             return res.status(500).json({ error: 'Internal Server Error' });
+//         }
+
+//         if (results.length > 0){
+//             res.json({ students: results });
+//         } else {
+//             res.json({ students: [], message: 'No students matched'});
+//         }
+//     });
+// });
+
+// Add a new user (POST request for adding a student)
+app.post('/add', (req, res) => {
+    // Destructure the necessary fields (name, year, course, email) from the request body
+    const { name, year, course, email } = req.body;
+
+    // SQL query to check if a student with the same email already exists
+    const query_check = 'SELECT * FROM student WHERE email = ? ';
+    
+    // SQL query to insert a new student into the 'student' table
+    const query_insert = 'INSERT INTO student (name, year, course, email) VALUES (?, ?, ?, ?)';
+
+    // Check if a student with the provided email already exists in the database
+    db.query(query_check, [email], (err, results) => {
+        if (err) {
+            // Log the error if query execution fails while checking for existing student
+            console.error('Error checking for existing student:', err.message);
+            // Render the 'index' view with an error message if checking fails
+            return res.render("index", { student: [], search_results: [], error: "Failed to add student", message: []});
+        }
+
+        // If the query returns results, it means the student already exists
+        if (results.length > 0) {
+            // Render the 'index' view with a message indicating the student already exists
+            return res.render('index', {
+                student: [], // Pass the main student data if needed
+                search_results: [], // No search results to display
+                message: 'Student with this email already exists.', // Error message indicating duplicate email
+                no_result: false // No search results are displayed
+            });
+        }
+
+        // If the student does not exist, insert the new student into the database
+        db.query(query_insert, [name, year, course, email], (err) => {
+            if (err) {
+                // Log the error if query execution fails while inserting the new student
+                console.error('Error inserting student:', err.message);
+                // Render the 'index' view with an error message if insertion fails
+                return res.render("index", { student: [], search_results: [], error: "Failed to add student" });
+            }
+
+            // If insertion is successful, redirect back to the main page
+            res.redirect('/'); // Redirect to the root path (refreshes the main page)
+        });
+    });
+});
+
+// Update user (POST request to update student information by ID)
+app.post('/update/:id', (req, res) => {
+    // Extract the student ID from the route parameter (req.params)
+    const { id } = req.params;
+    
+    // Extract the updated student data from the request body
+    const { name, year, course, email } = req.body;
+
+    // SQL query to update the student's information by ID
+    const query = 'UPDATE student SET name = ?, year = ?, course = ?, email = ? WHERE id = ?';
+    
+    // SQL query to check if a student with the provided email already exists
+    const query_check = 'SELECT * FROM student WHERE email = ? ';
+
+    // Check if the email already exists in the database
+    db.query(query_check, [email], (err, results) => {
+        if (err) {
+            // Log the error if the query to check for existing email fails
+            console.error('Error checking for existing student:', err.message);
+            // Render the 'index' view with an error message if checking fails
+            return res.render("index", { student: [], search_results: [], error: "Failed to add student", message: []});
+        }
+
+        // If results are returned, it means the student with this email already exists
+        if (results.length > 0) {
+            // Render the 'index' view with a message indicating the student already exists
+            return res.render('index', {
+                student: [], // Pass the main student data if needed
+                search_results: [], // No search results
+                message: 'Student with this email already exists.', // Error message
+                no_result: false // No search results are displayed
+            });
+        }
+
+        // If no email conflict, proceed to update the student's information
+        db.query(query, [name, year, course, email, id], (err) => {
+            if (err) {
+                // Log the error if the query to update the student fails
+                console.error('Error updating record:', err.message);
+                // Render the 'index' view with the error message if update fails
+                res.render('index', { student: [], error: err.message, search_results: [] });
+            } else {
+                // Redirect to the root path after a successful update
+                res.redirect('/'); // Refreshes the main page after the update
+            }
+        });
+    });
+});
+
+// Delete user (POST request to delete a student by ID)
+app.post('/delete/:id', (req, res) => {
+    // Extract the student ID from the route parameter (req.params)
+    const { id } = req.params;
+
+    // SQL query to delete a student by ID
+    const query = 'DELETE FROM student WHERE id = ?';
+
+    // Perform the query to delete the student
+    db.query(query, [id], (err) => {
+        if (err) {
+            // Log the error if the query to delete the student fails
+            console.error('Error deleting record:', err.message);
+            // Render the 'index' view with an error message if deletion fails
+            res.render('index', { error: err.message, search_results: [] });
+        } else {
+            // Redirect to the root path after successful deletion
+            res.redirect('/'); // Refreshes the main page after deletion
+        }
+    });
+});
+
+// Start the server 
+const PORT = 3000;
+app.listen(PORT, () => {
+    // Log a message indicating that the server is running
+    console.log(`Server running on http://localhost:${PORT}`);
+});
+
+
+
